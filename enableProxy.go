@@ -6,36 +6,38 @@ import (
 	"unsafe"
 )
 
-func main() {
-	setProxy("localhost:8888", "")
-}
+func setProxy(proxy, exceptions, autoconfig string, autodetect bool) bool {
+	options := [4]InternetConnectionOption{}
+	options[0].Option = INTERNET_PER_CONN_FLAGS
+	options[1].Option = INTERNET_PER_CONN_PROXY_SERVER
+	options[2].Option = INTERNET_PER_CONN_PROXY_BYPASS
+	options[3].Option = INTERNET_PER_CONN_AUTOCONFIG_URL
+	options[0].Value = PROXY_TYPE_DIRECT
 
-func winStr(str string) uintptr {
-	return uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(str)))
-}
-
-func setProxy(strProxy, exceptions string) bool {
-
-	// USE a proxy server ...
-	options := []InternetConnectionOption{}
-
-	options[0].m_Option = INTERNET_PER_CONN_FLAGS
-	if strProxy != "" { // use THIS proxy server
-		options[0].m_Value.m_Int = PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY
-		options[1].m_Option = INTERNET_PER_CONN_PROXY_SERVER
-		options[1].m_Value.m_StringPtr = winStr(strProxy)
-		if exceptions != "" { // except for these addresses ...
-			options[2].m_Option = INTERNET_PER_CONN_PROXY_BYPASS
-			options[2].m_Value.m_StringPtr = winStr(exceptions)
-		}
-	} else {
-		options[0].m_Value.m_Int = PROXY_TYPE_DIRECT
+	if proxy != "" {
+		options[0].Value |= PROXY_TYPE_PROXY
+		options[1].Value = uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(proxy)))
 	}
-	list := InternetPerConnOptionList{uint32(unsafe.Sizeof(options)), 0, uint32(len(options)), 0, options}
+
+	if exceptions != "" {
+		options[2].Value = uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(exceptions)))
+	}
+
+	if autoconfig != "" {
+		options[0].Value |= PROXY_TYPE_AUTO_PROXY_URL
+		options[3].Value = uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(autoconfig)))
+	}
+
+	if autodetect {
+		options[0].Value |= PROXY_TYPE_AUTO_DETECT
+	}
+
+	list := InternetPerConnOptionList{0, 0, uint32(4), 0, uintptr(unsafe.Pointer(&options))}
+	list.dwSize = uint32(unsafe.Sizeof(list))
 
 	var winInet = syscall.NewLazyDLL("WinInet.dll")
-	var proc = winInet.NewProc("InternetSetOption")
-	ret, _, err := proc.Call(0, INTERNET_OPTION_PER_CONNECTION_OPTION, uintptr(unsafe.Pointer(&list)), unsafe.Sizeof(list))
+	var proc = winInet.NewProc("InternetSetOptionW")
+	ret, _, err := proc.Call(0, uintptr(INTERNET_OPTION_PER_CONNECTION_OPTION), uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Sizeof(list)))
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -47,24 +49,12 @@ type InternetPerConnOptionList struct {
 	pszConnection uintptr // connection name to set/query options
 	dwOptionCount uint32  // number of options to set/query
 	dwOptionError uint32  // on error, which option failed
-	options       []InternetConnectionOption
+	options       uintptr
 }
 
 type InternetConnectionOption struct {
-	Size     uint32
-	m_Option uint32
-	m_Value  InternetConnectionOptionValue
-}
-
-type InternetConnectionOptionValue struct {
-	m_FileTime  FILETIME
-	m_Int       uint32
-	m_StringPtr uintptr
-}
-
-type FILETIME struct {
-	DwLowDateTime  uint32
-	DwHighDateTime uint32
+	Option uint32
+	Value  uintptr // in c this is UNION(DWORD, LPTSTR, FILETIME)
 }
 
 const (
