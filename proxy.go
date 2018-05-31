@@ -2,11 +2,12 @@ package main
 
 import (
 	"crypto/tls"
-	"flag"
+	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"time"
 )
 
@@ -35,6 +36,7 @@ func transfer(destination io.WriteCloser, source io.ReadCloser) {
 	io.Copy(destination, source)
 }
 func handleHTTP(w http.ResponseWriter, req *http.Request) {
+	fmt.Println(req.URL)
 	resp, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -52,17 +54,43 @@ func copyHeader(dst, src http.Header) {
 		}
 	}
 }
-func main() {
-	var pemPath string
-	flag.StringVar(&pemPath, "pem", "server.pem", "path to pem file")
-	var keyPath string
-	flag.StringVar(&keyPath, "key", "server.key", "path to key file")
-	var proto string
-	flag.StringVar(&proto, "proto", "https", "Proxy protocol (http or https)")
-	flag.Parse()
-	if proto != "http" && proto != "https" {
-		log.Fatal("Protocol must be either http or https")
+
+func unsetProxy() {
+	if r := recover(); r != nil {
+		fmt.Println("Cleaning up proxy on panic")
+		setProxy("", "", "", false)
 	}
+}
+
+func main() {
+
+	//tell windows to use a proxy
+	os.Setenv("test", "vest")
+	setProxy("localhost:8888", "", "", false)
+
+	//disable proxy on ^C
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		<-c
+		fmt.Println("Cleaning up proxy on ^C")
+		setProxy("", "", "", false)
+		//todo: gracefully exit proxy
+		os.Exit(0)
+	}()
+
+	//disable proxy on end or panic
+	defer func() {
+		if r := recover(); r != nil {
+		}
+		fmt.Println("Cleaning up proxy on end")
+		setProxy("", "", "", false)
+	}()
+
+	var pemPath string
+	var keyPath string
+	var proto string = "http"
+
 	server := &http.Server{
 		Addr: ":8888",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,8 +104,8 @@ func main() {
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
 	if proto == "http" {
-		log.Fatal(server.ListenAndServe())
+		server.ListenAndServe()
 	} else {
-		log.Fatal(server.ListenAndServeTLS(pemPath, keyPath))
+		server.ListenAndServeTLS(pemPath, keyPath)
 	}
 }
