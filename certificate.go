@@ -7,7 +7,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"math/big"
 	"os"
 	"time"
@@ -20,9 +19,11 @@ func ensureCACert(uninstall bool) error {
 
 	if uninstall {
 		if err := truststore.UninstallFile(caCertFile, truststore.WithJava(), truststore.WithFirefox()); err != nil {
-			return err
+			//todo:  truststore seems to return errors here despite removing certs on Windows
+			fmt.Printf("%v\n", err)
 		}
 		if err := os.Remove(caCertFile); err != nil {
+			fmt.Println("Removing CA Cert file")
 			return err
 		}
 		return nil
@@ -42,13 +43,12 @@ func ensureCACert(uninstall bool) error {
 }
 
 func createCACert(caCertFile string) error {
-	const org = "NetMiddler"
-	const commonName = "NetMiddler"
+	const org = "DO_NOT_TRUST_NetMiddlerRoot"
+	const commonName = "DO_NOT_TRUST_NetMiddlerRoot"
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		log.Fatalf("Failed to generate certificate key %v", err)
-		return err
+		return fmt.Errorf("failed to generate certificate key: %v", err)
 	}
 
 	now := time.Now()
@@ -64,15 +64,13 @@ func createCACert(caCertFile string) error {
 
 	certDERBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, key.Public(), key)
 	if err != nil {
-		log.Fatalf("Failed to create CA cert for apiserver %v", err)
-		return err
+		return fmt.Errorf("failed to create CA cert for apiserver %v", err)
 	}
 	signingCert, err := x509.ParseCertificate(certDERBytes)
 	if err != nil {
-		log.Fatalf("Failed to parse CA cert for apiserver %v", err)
-		return err
+		return fmt.Errorf("failed to parse CA cert for apiserver %v", err)
 	}
 
 	caCert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: signingCert.Raw})
-	return os.WriteFile(caCertFile, caCert, 600)
+	return os.WriteFile(caCertFile, caCert, 0600)
 }

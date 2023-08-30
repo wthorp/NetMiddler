@@ -59,9 +59,14 @@ func copyHeader(dst, src http.Header) {
 func main() {
 	var uninstall bool
 	flag.BoolVar(&uninstall, "uninstall", false, "uninstall the given certificate")
+	flag.Parse()
 
 	// verify existence of CACert for HTTPS MITM self-signing
-	if err := ensureCACert(uninstall); err != nil || uninstall {
+	if err := ensureCACert(uninstall); err != nil {
+		fmt.Printf("error handling certificates : %v\n", err)
+		return
+	}
+	if uninstall {
 		return
 	}
 
@@ -83,6 +88,7 @@ func main() {
 	//disable proxy on end or panic
 	defer func() {
 		if r := recover(); r != nil {
+			disableProxy()
 		}
 		fmt.Println("Cleaning up proxy on end")
 		disableProxy()
