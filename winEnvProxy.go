@@ -22,7 +22,7 @@ const (
 // KEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Session Manager\Environment registry key,
 // then broadcast a WM_SETTINGCHANGE message with lParam set to the string "Environment".
 
-func SetHttpProxyEnvVar(value string) error {
+func setWinEnvProxy(value string) error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.SET_VALUE)
 	if err != nil {
 		log.Printf("%v\n", k)
@@ -40,11 +40,9 @@ func SetHttpProxyEnvVar(value string) error {
 	if err != nil {
 		fmt.Println("SetProxyEnvVar ERROR!!!")
 	}
-	return err
-}
 
-func UpdateEnvPath() {
-
+	// notify windows-friendly programs that the environment variable has changed
+	// note that not all programs listen for these changes, so some may need to be restarted
 	var proc = syscall.NewLazyDLL("user32.dll").NewProc("SendMessageTimeoutW")
 	//et, _, err :=
 	envUTF := uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(envText)))

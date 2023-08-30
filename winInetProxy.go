@@ -6,7 +6,9 @@ import (
 	"unsafe"
 )
 
-func setProxy(proxy, exceptions, autoconfig string, autodetect bool) bool {
+func setWinInetProxy(proxy string) bool {
+	var exceptions, autoconfig string
+	var autodetect bool
 	options := [4]InternetConnectionOption{}
 	options[0].Option = INTERNET_PER_CONN_FLAGS
 	options[1].Option = INTERNET_PER_CONN_PROXY_SERVER

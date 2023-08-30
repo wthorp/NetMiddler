@@ -59,6 +59,7 @@ func copyHeader(dst, src http.Header) {
 func main() {
 	var uninstall bool
 	flag.BoolVar(&uninstall, "uninstall", false, "uninstall the given certificate")
+	//port := flag.Int("port", 8888, "the port on which the HTTP(S) proxy will run")
 	flag.Parse()
 
 	// verify existence of CACert for HTTPS MITM self-signing
@@ -69,10 +70,6 @@ func main() {
 	if uninstall {
 		return
 	}
-
-	// fmt.Scanln()
-	// SetProxyEnvVar("")
-	// UpdateEnvPath()
 
 	enableProxy()
 
@@ -108,6 +105,7 @@ func main() {
 			}
 		}),
 		// Disable HTTP/2.
+		//todo:  Why did I add this years ago?
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
 	if proto == "http" {
@@ -119,18 +117,12 @@ func main() {
 
 func enableProxy() {
 	fmt.Println("Setting up proxy on localhost:8888")
-	//os.Setenv("test", "vest")
-	setProxy("localhost:8888", "", "", false)
-
-	SetHttpProxyEnvVar("localhost:8888")
-	UpdateEnvPath()
-
+	setWinInetProxy("localhost:8888")
+	setWinEnvProxy("localhost:8888")
 }
 
 func disableProxy() {
 	fmt.Println("Cleaning up proxy")
-	setProxy("", "", "", false)
-
-	SetHttpProxyEnvVar("")
-	UpdateEnvPath()
+	setWinInetProxy("")
+	setWinEnvProxy("")
 }
