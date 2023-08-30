@@ -71,7 +71,7 @@ func main() {
 		return
 	}
 
-	enableProxy()
+	enableProxy("localhost:8888")
 
 	//disable proxy on ^C
 	c := make(chan os.Signal, 1)
@@ -113,16 +113,4 @@ func main() {
 	} else {
 		server.ListenAndServeTLS(pemPath, keyPath)
 	}
-}
-
-func enableProxy() {
-	fmt.Println("Setting up proxy on localhost:8888")
-	setWinInetProxy("localhost:8888")
-	setWinEnvProxy("localhost:8888")
-}
-
-func disableProxy() {
-	fmt.Println("Cleaning up proxy")
-	setWinInetProxy("")
-	setWinEnvProxy("")
 }
