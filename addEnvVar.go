@@ -22,7 +22,7 @@ const (
 // KEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Session Manager\Environment registry key,
 // then broadcast a WM_SETTINGCHANGE message with lParam set to the string "Environment".
 
-func SetProxyEnvVar(value string) {
+func SetHttpProxyEnvVar(value string) error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.SET_VALUE)
 	if err != nil {
 		log.Printf("%v\n", k)
@@ -31,16 +31,16 @@ func SetProxyEnvVar(value string) {
 	defer k.Close()
 
 	if value == "" {
-		fmt.Println("DELETING KEY")
+		fmt.Println("Removing http_proxy environment variable")
 		err = k.DeleteValue("http_proxy")
 	} else {
-		fmt.Println("CREATING KEY")
+		fmt.Printf("Setting http_proxy environment variable = %s\n", value)
 		err = k.SetStringValue("http_proxy", value)
 	}
 	if err != nil {
-		fmt.Println("ERROR!!!")
-		panic err
+		fmt.Println("SetProxyEnvVar ERROR!!!")
 	}
+	return err
 }
 
 func UpdateEnvPath() {
@@ -54,12 +54,4 @@ func UpdateEnvPath() {
 	// 	fmt.Printf("UpdateEnvPath ERROR!!! %v %v ??!\n", ret, err)
 	// 	log.Fatal(err)
 	// }
-}
-
-func main() {
-	SetProxyEnvVar("test")
-	UpdateEnvPath()
-	fmt.Scanln()
-	SetProxyEnvVar("")
-	UpdateEnvPath()
 }

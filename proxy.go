@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -55,27 +56,27 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-func unsetProxy() {
-	if r := recover(); r != nil {
-		fmt.Println("Cleaning up proxy on panic")
-		setProxy("", "", "", false)
-	}
-}
-
 func main() {
+	var uninstall bool
+	flag.BoolVar(&uninstall, "uninstall", false, "uninstall the given certificate")
 
-	//tell windows to use a proxy
-	os.Setenv("test", "vest")
-	setProxy("localhost:8888", "", "", false)
+	// verify existence of CACert for HTTPS MITM self-signing
+	if err := ensureCACert(uninstall); err != nil || uninstall {
+		return
+	}
+
+	// fmt.Scanln()
+	// SetProxyEnvVar("")
+	// UpdateEnvPath()
+
+	enableProxy()
 
 	//disable proxy on ^C
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	go func() {
 		<-c
-		fmt.Println("Cleaning up proxy on ^C")
-		setProxy("", "", "", false)
-		//todo: gracefully exit proxy
+		disableProxy()
 		os.Exit(0)
 	}()
 
@@ -84,7 +85,7 @@ func main() {
 		if r := recover(); r != nil {
 		}
 		fmt.Println("Cleaning up proxy on end")
-		setProxy("", "", "", false)
+		disableProxy()
 	}()
 
 	var pemPath string
@@ -108,4 +109,22 @@ func main() {
 	} else {
 		server.ListenAndServeTLS(pemPath, keyPath)
 	}
+}
+
+func enableProxy() {
+	fmt.Println("Setting up proxy on localhost:8888")
+	//os.Setenv("test", "vest")
+	setProxy("localhost:8888", "", "", false)
+
+	SetHttpProxyEnvVar("localhost:8888")
+	UpdateEnvPath()
+
+}
+
+func disableProxy() {
+	fmt.Println("Cleaning up proxy")
+	setProxy("", "", "", false)
+
+	SetHttpProxyEnvVar("")
+	UpdateEnvPath()
 }
