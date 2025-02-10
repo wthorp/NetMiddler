@@ -8,3 +8,6 @@ The code relies "github.com/smallstep/truststore" to reg for Java, Firefox, and 
 
 This is a work in progress, and doesn't fully function yet
 If you're looking for _working software_, check out [goproxy](https://github.com/elazarl/goproxy).
+
+It's worth noting that setting the proxy in MacOS requires permissions, with code signing.
+It seems that building the solution doesn't work, but running it as `go run .` does!

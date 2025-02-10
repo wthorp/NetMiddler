@@ -46,7 +46,7 @@ func createCACert(caCertFile string) error {
 	const org = "DO_NOT_TRUST_NetMiddlerRoot"
 	const commonName = "DO_NOT_TRUST_NetMiddlerRoot"
 
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return fmt.Errorf("failed to generate certificate key: %v", err)
 	}
@@ -62,15 +62,50 @@ func createCACert(caCertFile string) error {
 		IsCA:                  true,
 	}
 
-	certDERBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, key.Public(), key)
+	certDERBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, privateKey.Public(), privateKey)
 	if err != nil {
 		return fmt.Errorf("failed to create CA cert for apiserver %v", err)
 	}
-	signingCert, err := x509.ParseCertificate(certDERBytes)
+	// Save the certificate to a PEM file
+	certOut, err := os.Create("netmiddler.pem")
 	if err != nil {
-		return fmt.Errorf("failed to parse CA cert for apiserver %v", err)
+		return fmt.Errorf("failed to open proxy-cert.pem for writing: %v", err)
+	}
+	defer certOut.Close()
+
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDERBytes}); err != nil {
+		return fmt.Errorf("failed to write certificate to file: %v", err)
 	}
 
-	caCert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: signingCert.Raw})
-	return os.WriteFile(caCertFile, caCert, 0600)
+	// Save the private key to a PEM file
+	keyOut, err := os.Create("netmiddler_pk.pem")
+	if err != nil {
+		return fmt.Errorf("failed to open proxy-key.pem for writing: %v", err)
+	}
+	defer keyOut.Close()
+
+	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privateKeyBytes}); err != nil {
+		return fmt.Errorf("failed to write private key to file: %v", err)
+	}
+
+	fmt.Println("Certificate and private key generated successfully.")
+	return nil
 }
+
+// // register the CA with GoProxy
+// func SetProxyCA(caCert, caKey []byte) error {
+// 	goproxyCa, err := tls.X509KeyPair(caCert, caKey)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	if goproxyCa.Leaf, err = x509.ParseCertificate(goproxyCa.Certificate[0]); err != nil {
+// 		return err
+// 	}
+// 	goproxy.GoproxyCa = goproxyCa
+// 	goproxy.OkConnect = &goproxy.ConnectAction{Action: goproxy.ConnectAccept, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
+// 	goproxy.MitmConnect = &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
+// 	goproxy.HTTPMitmConnect = &goproxy.ConnectAction{Action: goproxy.ConnectHTTPMitm, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
+// 	goproxy.RejectConnect = &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
+// 	return nil
+// }

@@ -86,8 +86,16 @@ NSDictionary* visit(visitor v, bool persist, NSDictionary* args)
     SCNetworkProtocolRef proxyProtocolRef;
     NSDictionary *oldPreferences;
 
+    AuthorizationRef authRef;
+    AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment, kAuthorizationFlagInteractionAllowed, &authRef);
+    if (authRef == nil) {
+        [ret setObject:@"Fail to obtain Authorization Ref" forKey:@"error"];
+        [ret setObject:[[NSNumber alloc] initWithInt:NO_PERMISSION] forKey:@"code"];
+        return ret;
+    }
+
     // Get System Preferences Lock
-    SCPreferencesRef prefsRef = SCPreferencesCreate(NULL, CFSTR("org.getlantern.lantern"), NULL);
+    SCPreferencesRef prefsRef = SCPreferencesCreateWithAuthorization(NULL, CFSTR("org.netmiddler.proxy"), NULL, authRef);
 
     if (prefsRef == NULL) {
         [ret setObject:@"Fail to obtain Preferences Ref" forKey:@"error"];
@@ -181,12 +189,6 @@ const char* dictionaryToString(NSDictionary *dict) {
     return nsstring2cstring(data);
 }
 
-//int show(void)
-//{
-//    return visit(&showAction, false, @{});
-//}
-
-
 const char* turnOn(const char *host, const char *port)
 {
     NSLog(@"%s:%s", host, port);
@@ -214,7 +216,7 @@ import "C"
 import (
 	"encoding/json"
 	"errors"
-	"net"
+	"strconv"
 	"unsafe"
 )
 
@@ -238,14 +240,10 @@ func disableProxy() error {
 	return nil
 }
 
-func enableProxy(addrPort string) error {
-	host, port, err := net.SplitHostPort(addrPort)
-	if err != nil {
-		return err
-	}
+func enableProxy(port int) error {
 
-	chost := C.CString(host)
-	cport := C.CString(port)
+	chost := C.CString("localhost")
+	cport := C.CString(strconv.Itoa(port))
 
 	ret := C.turnOn(chost, cport)
 	C.free(unsafe.Pointer(chost))

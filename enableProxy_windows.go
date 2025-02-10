@@ -5,20 +5,21 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows/registry"
 )
 
-func enableProxy(addrPort string) error {
-	fmt.Println("Setting up proxy on localhost:8888")
+func enableProxy(port int) error {
+	addrPort := "localhost:" + strconv.Itoa(port)
 	setWinInetProxy(addrPort)
 	setWinEnvProxy(addrPort)
+	return nil
 }
 
 func disableProxy() {
-	fmt.Println("Cleaning up proxy")
 	setWinInetProxy("")
 	setWinEnvProxy("")
 }

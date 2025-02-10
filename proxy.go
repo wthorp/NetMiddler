@@ -5,112 +5,208 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"time"
+	"strconv"
+	"strings"
+	"syscall"
 )
 
-func handleTunneling(w http.ResponseWriter, r *http.Request) {
-	dest_conn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
-		return
-	}
-	client_conn, _, err := hijacker.Hijack()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-	}
-	go transfer(dest_conn, client_conn)
-	go transfer(client_conn, dest_conn)
-}
-func transfer(destination io.WriteCloser, source io.ReadCloser) {
-	defer destination.Close()
-	defer source.Close()
-	io.Copy(destination, source)
-}
-func handleHTTP(w http.ResponseWriter, req *http.Request) {
-	fmt.Println(req.URL)
-	resp, err := http.DefaultTransport.RoundTrip(req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-	defer resp.Body.Close()
-	copyHeader(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-func copyHeader(dst, src http.Header) {
-	for k, vv := range src {
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
-	}
-}
+var (
+	printHeaders bool
+	printBody    bool
+	uninstall    bool
+)
 
 func main() {
-	var uninstall bool
+	flag.BoolVar(&printHeaders, "print-headers", true, "Print HTTPS headers")
+	flag.BoolVar(&printBody, "print-body", false, "Print HTTPS body")
+	port := flag.Int("port", 8888, "the port on which the HTTP(S) proxy will run")
 	flag.BoolVar(&uninstall, "uninstall", false, "uninstall the given certificate")
-	//port := flag.Int("port", 8888, "the port on which the HTTP(S) proxy will run")
 	flag.Parse()
 
-	// verify existence of CACert for HTTPS MITM self-signing
+	// Ensure the CA certificate exists for HTTPS MITM self-signing
 	if err := ensureCACert(uninstall); err != nil {
-		fmt.Printf("error handling certificates : %v\n", err)
+		fmt.Printf("Error handling certificates: %v\n", err)
 		return
 	}
 	if uninstall {
 		return
 	}
 
-	enableProxy("localhost:8888")
+	// Enable proxy at the given port
+	enableProxy(*port)
 
-	//disable proxy on ^C
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	go func() {
-		<-c
-		disableProxy()
-		os.Exit(0)
-	}()
+	// Set up signal capturing for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	//disable proxy on end or panic
+	// Clean up the proxy on exit or panic
 	defer func() {
-		if r := recover(); r != nil {
-			disableProxy()
-		}
-		fmt.Println("Cleaning up proxy on end")
+		fmt.Println("Cleaning up proxy on exit")
 		disableProxy()
 	}()
 
-	var pemPath string
-	var keyPath string
-	var proto string = "http"
+	// Start proxy in a separate goroutine
+	go func() {
+		// Load the certificate (assumed that the CA is already installed)
+		cert, err := tls.LoadX509KeyPair("netmiddler.pem", "netmiddler_pk.pem")
+		if err != nil {
+			log.Fatalf("Failed to load certificate: %v", err)
+		}
 
-	server := &http.Server{
-		Addr: ":8888",
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodConnect {
-				handleTunneling(w, r)
-			} else {
-				handleHTTP(w, r)
-			}
-		}),
-		// Disable HTTP/2.
-		//todo:  Why did I add this years ago?
-		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
-	}
-	if proto == "http" {
-		server.ListenAndServe()
+		proxy := &Proxy{cert: cert}
+
+		// Start HTTP proxy
+		httpAddr := ":" + strconv.Itoa(*port)
+		log.Printf("Starting HTTP proxy on %s\n", httpAddr)
+		if err := http.ListenAndServe(httpAddr, proxy); err != nil {
+			log.Fatalf("Failed to start HTTP proxy: %v", err)
+		}
+	}()
+
+	// Wait for an interrupt (e.g., ^C) signal
+	sig := <-sigChan
+	fmt.Printf("\nReceived signal: %v, shutting down...\n", sig)
+
+	// Exiting the main function will trigger the deferred `disableProxy`
+}
+
+// Proxy structure to hold configuration
+type Proxy struct {
+	cert tls.Certificate
+}
+
+// Implement ServeHTTP to make Proxy implement http.Handler
+func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Handle HTTPS connections
+	if r.Method == http.MethodConnect {
+		p.handleHTTPS(w, r)
 	} else {
-		server.ListenAndServeTLS(pemPath, keyPath)
+		// Handle HTTP requests here if needed
+		// You can implement similar MITM handling for HTTP requests if desired
+		p.handleHTTP(w, r)
 	}
+}
+
+// Handle HTTP traffic by forwarding it to the target host
+func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
+	transport := http.DefaultTransport
+	outReq := new(http.Request)
+	*outReq = *r
+	outReq.RequestURI = ""
+	resp, err := transport.RoundTrip(outReq)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Log the HTTP request
+	log.Printf("HTTP %s %s %s", r.Method, r.URL, resp.Status)
+
+	// Copy headers
+	for key, value := range resp.Header {
+		w.Header()[key] = value
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	// Log the body if printBody is true
+	var bodyReader io.Reader = resp.Body
+	if printBody {
+		bodyReader = io.TeeReader(resp.Body, logWriter("HTTP Body: "))
+	}
+
+	io.Copy(w, bodyReader)
+}
+
+// Handle HTTPS connections with MITM attack
+func (p *Proxy) handleHTTPS(w http.ResponseWriter, r *http.Request) {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Cannot hijack connection", http.StatusInternalServerError)
+		return
+	}
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer clientConn.Close()
+
+	// Load the certificate (MITM certificate)
+	cert, err := tls.LoadX509KeyPair("netmiddler.pem", "netmiddler_pk.pem")
+	if err != nil {
+		log.Fatalf("Failed to load certificate: %v", err)
+	}
+
+	// Establish a TLS connection with the client
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ServerName:   r.Host, // Use the requested host as the server name
+	}
+
+	log.Printf("Starting TLS handshake with client for host %s\n", r.Host)
+
+	tlsClientConn := tls.Server(clientConn, tlsConfig)
+	if err := tlsClientConn.Handshake(); err != nil {
+		log.Printf("TLS handshake with client failed: %v\n", err)
+		return
+	}
+	log.Printf("TLS handshake with client succeeded for host %s\n", r.Host)
+
+	defer tlsClientConn.Close()
+
+	// Dial the target server
+	log.Printf("Dialing target server %s\n", r.Host)
+	targetConn, err := net.Dial("tcp", r.Host)
+	if err != nil {
+		log.Printf("Failed to connect to target server: %v\n", err)
+		return
+	}
+	defer targetConn.Close()
+
+	// Establish a TLS connection with the target server
+	tlsTargetConn := tls.Client(targetConn, &tls.Config{
+		InsecureSkipVerify: true,                          // Skip verifying the server's certificate for simplicity
+		ServerName:         strings.Split(r.Host, ":")[0], // Extract the hostname
+	})
+	if err := tlsTargetConn.Handshake(); err != nil {
+		log.Printf("TLS handshake with target server failed: %v\n", err)
+		return
+	}
+	log.Printf("TLS handshake with target server succeeded for host %s\n", r.Host)
+
+	defer tlsTargetConn.Close()
+
+	// Log the HTTPS request
+	log.Printf("HTTPS %s %s", r.Method, r.URL)
+
+	// Tunnel data between client and target server
+	go func() {
+		io.Copy(tlsTargetConn, tlsClientConn)
+	}()
+
+	var bodyReader io.Reader = tlsTargetConn
+	if printBody {
+		bodyReader = io.TeeReader(tlsTargetConn, logWriter("HTTPS Body: "))
+	}
+
+	io.Copy(tlsClientConn, bodyReader)
+}
+
+func logWriter(prefix string) io.Writer {
+	return &logWriterStruct{prefix: prefix}
+}
+
+type logWriterStruct struct {
+	prefix string
+}
+
+func (w *logWriterStruct) Write(p []byte) (n int, err error) {
+	log.Printf("%s%s", w.prefix, string(p))
+	return len(p), nil
 }
